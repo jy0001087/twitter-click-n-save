@@ -6,7 +6,7 @@
 // @match       https://twitter.com/*
 // @match       https://x.com/*
 // @license     GPL-3.0
-// @grant       GM.registerMenuCommand
+// @grant       GM_registerMenuCommand
 // @grant       GM_download
 // @updateURL   https://raw.githubusercontent.com/jy0001087/twitter-click-n-save/main/twitter-click-n-save.user.js
 // @downloadURL https://raw.githubusercontent.com/jy0001087/twitter-click-n-save/main/twitter-click-n-save.user.js
@@ -135,8 +135,8 @@ const backgroundFilenameTemplate = `[x][bg] {username}—{id}—{seconds}.{exten
 
 // ---------------------------------------------------------------------------------------------------------------------
 
-if (typeof GM === "object" && typeof GM?.registerMenuCommand === "function") {
-    void GM.registerMenuCommand("Show settings", showSettings);
+if (typeof GM_registerMenuCommand === "function") {
+    void GM_registerMenuCommand("Show settings", showSettings);
 }
 
 const settings = loadSettings();
@@ -2597,21 +2597,24 @@ function getUtils({verbose}) {
             //     https://www.xbext.com/docs/user-script-api-reference.html#GM-download
             if (url && /^https?:\/\//i.test(url)) {
                 try {
+                    console.log('[ujs][downloadBlob] A1: GM_download(originalUrl, name)', name);
                     const r = GM_download({ url, name: name || '' });
-                    if (r !== false) return; // X Browser returns undefined (=accepts it)
-                } catch (_) {}
+                    if (r !== false) { console.log('[ujs][downloadBlob] ✓ A1 succeeded'); return; }
+                } catch (_) { console.log('[ujs][downloadBlob] ✗ A1 threw, fall through'); }
             }
 
             // A2: Blob object directly (Tampermonkey 5.4.6226+, avoids re-fetch)
             try {
+                console.log('[ujs][downloadBlob] A2: GM_download(blob, name)');
                 const r = GM_download({ url: blob, name: name || '' });
-                if (r !== false) return;
+                if (r !== false) { console.log('[ujs][downloadBlob] ✓ A2 succeeded'); return; }
             } catch (_) {}
 
             // A3: Blob URL (older Tampermonkey)
             const blobUrl = URL.createObjectURL(blob);
             let ok = false;
             try {
+                console.log('[ujs][downloadBlob] A3: GM_download(blobUrl, name)');
                 const r = GM_download({
                     url: blobUrl,
                     name: name || '',
@@ -2620,11 +2623,14 @@ function getUtils({verbose}) {
                 });
                 ok = r !== false;
             } catch (_) {}
-            if (ok) return;
+            if (ok) { console.log('[ujs][downloadBlob] ✓ A3 succeeded'); return; }
             try { URL.revokeObjectURL(blobUrl); } catch(_) {}
+        } else {
+            console.log('[ujs][downloadBlob] GM_download not available, using Mode B');
         }
 
         // ---- Mode B: Anchor download (universal fallback) ----
+        console.log('[ujs][downloadBlob] B: <a download> fallback');
         const blobUrl = URL.createObjectURL(blob);
         const a = document.createElement("a");
         a.href = blobUrl + (url ? ("#" + url) : "");
