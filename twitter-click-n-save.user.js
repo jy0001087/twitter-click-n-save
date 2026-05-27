@@ -714,7 +714,9 @@ function hoistFeatures() {
             // Linux/Android: / (path separator), \0 (null byte)
             // Also, trim leading/trailing spaces and replace multiple spaces with a single one.
             const problematicCharsRegex = /[\\/:*?"<>|\x00-\x1F\x7F]+/g; // Includes control characters
-            let sanitizedText = text.replace(problematicCharsRegex, '_');
+            let sanitizedText = text
+                .replace(/\r\n|\r|\n/g, ',')  // 换行回车→逗号（在转义之前处理）
+                .replace(problematicCharsRegex, '_');
             // 将所有空白字符（如换行符、制表符）替换为逗号，并去除首尾逗号。
             sanitizedText = sanitizedText.replace(/\s+/g, ',').replace(/^,+|,+$/g, '');
 
