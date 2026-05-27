@@ -2586,53 +2586,55 @@ function getUtils({verbose}) {
     }
 
     // Multi-mode download with automatic fallback:
-    //   Mode A: GM_download (X Browser native, Tampermonkey) — best filename support
-    //   Mode B: <a download> with DOM append — universal fallback
-    //   Mode C: New window — last resort
+    //   A1: GM_download(originalUrl, name) — X Browser native (only supports http/https URLs)
+    //   A2: GM_download(blob, name)         — Tampermonkey 5.4.6226+ (direct Blob object)
+    //   A3: GM_download(blobUrl, name)      — older Tampermonkey
+    //   B:  <a download> + DOM append       — universal fallback
     function downloadBlob(blob, name, url) {
-        // ---- Mode A: GM_download ----
         if (typeof GM_download === 'function') {
-            // A1: Try Blob object directly (Tampermonkey 5.4.6226+, avoids re-fetch)
-            try {
-                const result = GM_download({ url: blob, name: name || '' });
-                if (result !== false) return;
-            } catch (_) {}
-
-            // A2: Try blob URL (X Browser, older Tampermonkey)
-            const blobUrl = URL.createObjectURL(blob);
-            let gmHandled = false;
-            try {
-                const result = GM_download({
-                    url: blobUrl,
-                    name: name || '',
-                    onload: () => { try { URL.revokeObjectURL(blobUrl); } catch(_) {} },
-                    onerror: () => { try { URL.revokeObjectURL(blobUrl); } catch(_) {} }
-                });
-                gmHandled = result !== false;
-            } catch (_) {}
-            if (gmHandled) return;
-            try { URL.revokeObjectURL(blobUrl); } catch(_) {}
-
-            // A3: Try original URL + custom name (X Browser re-download fallback)
+            // A1: Original URL + custom name (works everywhere: X Browser, TM)
+            //     X Browser's GM_download url only accepts http/https strings, NOT Blob/blob:
+            //     https://www.xbext.com/docs/user-script-api-reference.html#GM-download
             if (url && /^https?:\/\//i.test(url)) {
                 try {
-                    const result = GM_download({ url, name: name || '' });
-                    if (result !== false) return;
+                    const r = GM_download({ url, name: name || '' });
+                    if (r !== false) return; // X Browser returns undefined (=accepts it)
                 } catch (_) {}
             }
+
+            // A2: Blob object directly (Tampermonkey 5.4.6226+, avoids re-fetch)
+            try {
+                const r = GM_download({ url: blob, name: name || '' });
+                if (r !== false) return;
+            } catch (_) {}
+
+            // A3: Blob URL (older Tampermonkey)
+            const blobUrl = URL.createObjectURL(blob);
+            let ok = false;
+            try {
+                const r = GM_download({
+                    url: blobUrl,
+                    name: name || '',
+                    onload() { try { URL.revokeObjectURL(blobUrl); } catch(_) {} },
+                    onerror() { try { URL.revokeObjectURL(blobUrl); } catch(_) {} }
+                });
+                ok = r !== false;
+            } catch (_) {}
+            if (ok) return;
+            try { URL.revokeObjectURL(blobUrl); } catch(_) {}
         }
 
-        // ---- Mode B: Anchor download (DOM-appended, enhanced fallback) ----
+        // ---- Mode B: Anchor download (universal fallback) ----
         const blobUrl = URL.createObjectURL(blob);
-        const anchor = document.createElement("a");
-        anchor.href = blobUrl + (url ? ("#" + url) : "");
-        anchor.download = name || '';
-        anchor.style.display = 'none';
-        anchor.target = '_blank';
-        document.body.appendChild(anchor);
-        try { anchor.click(); } catch (_) { /* mobile may block scripted click */ }
+        const a = document.createElement("a");
+        a.href = blobUrl + (url ? ("#" + url) : "");
+        a.download = name || '';
+        a.style.display = 'none';
+        a.target = '_blank';
+        document.body.appendChild(a);
+        try { a.click(); } catch (_) { /* mobile may block scripted click */ }
         setTimeout(() => {
-            try { document.body.removeChild(anchor); } catch(_) {}
+            try { document.body.removeChild(a); } catch(_) {}
             try { URL.revokeObjectURL(blobUrl); } catch(_) {}
         }, 60000);
     }
