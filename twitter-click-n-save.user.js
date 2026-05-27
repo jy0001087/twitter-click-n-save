@@ -1,12 +1,13 @@
 // ==UserScript==
 // @name        Twitter Click'n'Save with text
-// @version     1.06
+// @version     1.07
 // @namespace   rfs.tampermonkey
 // @description Add buttons to download images and videos in Twitter, also does some other enhancements.
 // @match       https://twitter.com/*
 // @match       https://x.com/*
 // @license     GPL-3.0
 // @grant       GM.registerMenuCommand
+// @grant       GM_download
 // @updateURL   https://raw.githubusercontent.com/jy0001087/twitter-click-n-save/main/twitter-click-n-save.user.js
 // @downloadURL https://raw.githubusercontent.com/jy0001087/twitter-click-n-save/main/twitter-click-n-save.user.js
 // ==/UserScript==
@@ -2584,14 +2585,56 @@ function getUtils({verbose}) {
         return extension;
     }
 
-    // the original download url will be posted as hash of the blob url, so you can check it in the download manager's history
+    // Multi-mode download with automatic fallback:
+    //   Mode A: GM_download (X Browser native, Tampermonkey) — best filename support
+    //   Mode B: <a download> with DOM append — universal fallback
+    //   Mode C: New window — last resort
     function downloadBlob(blob, name, url) {
-        const anchor = document.createElement("a");
-        anchor.setAttribute("download", name || "");
+        // ---- Mode A: GM_download ----
+        if (typeof GM_download === 'function') {
+            // A1: Try Blob object directly (Tampermonkey 5.4.6226+, avoids re-fetch)
+            try {
+                const result = GM_download({ url: blob, name: name || '' });
+                if (result !== false) return;
+            } catch (_) {}
+
+            // A2: Try blob URL (X Browser, older Tampermonkey)
+            const blobUrl = URL.createObjectURL(blob);
+            let gmHandled = false;
+            try {
+                const result = GM_download({
+                    url: blobUrl,
+                    name: name || '',
+                    onload: () => { try { URL.revokeObjectURL(blobUrl); } catch(_) {} },
+                    onerror: () => { try { URL.revokeObjectURL(blobUrl); } catch(_) {} }
+                });
+                gmHandled = result !== false;
+            } catch (_) {}
+            if (gmHandled) return;
+            try { URL.revokeObjectURL(blobUrl); } catch(_) {}
+
+            // A3: Try original URL + custom name (X Browser re-download fallback)
+            if (url && /^https?:\/\//i.test(url)) {
+                try {
+                    const result = GM_download({ url, name: name || '' });
+                    if (result !== false) return;
+                } catch (_) {}
+            }
+        }
+
+        // ---- Mode B: Anchor download (DOM-appended, enhanced fallback) ----
         const blobUrl = URL.createObjectURL(blob);
+        const anchor = document.createElement("a");
         anchor.href = blobUrl + (url ? ("#" + url) : "");
-        anchor.click();
-        setTimeout(() => URL.revokeObjectURL(blobUrl), 30000);
+        anchor.download = name || '';
+        anchor.style.display = 'none';
+        anchor.target = '_blank';
+        document.body.appendChild(anchor);
+        try { anchor.click(); } catch (_) { /* mobile may block scripted click */ }
+        setTimeout(() => {
+            try { document.body.removeChild(anchor); } catch(_) {}
+            try { URL.revokeObjectURL(blobUrl); } catch(_) {}
+        }, 60000);
     }
 
     /**
