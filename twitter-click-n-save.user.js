@@ -2585,36 +2585,36 @@ function getUtils({verbose}) {
         return extension;
     }
 
-    // Multi-mode download with automatic fallback:
-    //   A1: GM_download(originalUrl, name) — X Browser native (only supports http/https URLs)
+    // Multi-mode download with automatic fallback.
+    // Priority is "save the already-fetched Blob" — do NOT re-download the CDN URL:
     //   A2: GM_download(blob, name)         — Tampermonkey 5.4.6226+ (direct Blob object)
-    //   A3: GM_download(blobUrl, name)      — older Tampermonkey
-    //   B:  <a download> + DOM append       — universal fallback
+    //   A3: GM_download(blobUrl, name)      — older Tampermonkey (also gives X Browser a chance
+    //                                          to save the Blob AND keep the custom filename)
+    //   A1: GM_download(originalUrl, name)  — re-download via the browser's downloader.
+    //                                          DESKTOP ONLY. Skipped on mobile (incl. X Browser):
+    //                                          its downloader re-fetches the CDN URL outside the
+    //                                          page context (no page Referer/cookies), and
+    //                                          Referer-gated media (e.g. amplify_video) return
+    //                                          403/404 → X Browser shows "下载失败". The Blob is
+    //                                          already in memory → save it directly via B instead.
+    //   B:  <a download> blobUrl             — universal fallback (uses the already-fetched data;
+    //                                          X Browser's WebView may ignore the custom filename)
     function downloadBlob(blob, name, url) {
-        if (typeof GM_download === 'function') {
-            // A1: Original URL + custom name (works everywhere: X Browser, TM)
-            //     X Browser's GM_download url only accepts http/https strings, NOT Blob/blob:
-            //     https://www.xbext.com/docs/user-script-api-reference.html#GM-download
-            if (url && /^https?:\/\//i.test(url)) {
-                try {
-                    console.log('[ujs][downloadBlob] A1: GM_download(originalUrl, name)', name);
-                    const r = GM_download({ url, name: name || '' });
-                    if (r !== false) { console.log('[ujs][downloadBlob] ✓ A1 succeeded'); return; }
-                } catch (_) { console.log('[ujs][downloadBlob] ✗ A1 threw, fall through'); }
-            }
+        const isMobile = /Android|iPhone|iPad|Mobile/i.test(navigator.userAgent);
 
-            // A2: Blob object directly (Tampermonkey 5.4.6226+, avoids re-fetch)
+        if (typeof GM_download === 'function') {
+            // A2: Blob object directly (avoids re-fetch)
             try {
-                console.log('[ujs][downloadBlob] A2: GM_download(blob, name)');
+                console.log('[ujs][downloadBlob] A2: GM_download(blob, name)', name);
                 const r = GM_download({ url: blob, name: name || '' });
                 if (r !== false) { console.log('[ujs][downloadBlob] ✓ A2 succeeded'); return; }
             } catch (_) {}
 
-            // A3: Blob URL (older Tampermonkey)
+            // A3: Blob URL (older Tampermonkey; X Browser may accept it and keep the filename)
             const blobUrl = URL.createObjectURL(blob);
             let ok = false;
             try {
-                console.log('[ujs][downloadBlob] A3: GM_download(blobUrl, name)');
+                console.log('[ujs][downloadBlob] A3: GM_download(blobUrl, name)', name);
                 const r = GM_download({
                     url: blobUrl,
                     name: name || '',
@@ -2625,11 +2625,24 @@ function getUtils({verbose}) {
             } catch (_) {}
             if (ok) { console.log('[ujs][downloadBlob] ✓ A3 succeeded'); return; }
             try { URL.revokeObjectURL(blobUrl); } catch(_) {}
+
+            // A1: Original URL + custom name — desktop only (re-downloads the file via downloader)
+            if (!isMobile && url && /^https?:\/\//i.test(url)) {
+                try {
+                    console.log('[ujs][downloadBlob] A1: GM_download(originalUrl, name)', name);
+                    const r = GM_download({
+                        url, name: name || '',
+                        headers: { Referer: location.origin + '/' },
+                        onerror() { console.warn('[ujs][downloadBlob] ✗ A1 downloader reported an error'); }
+                    });
+                    if (r !== false) { console.log('[ujs][downloadBlob] ✓ A1 succeeded'); return; }
+                } catch (_) { console.log('[ujs][downloadBlob] ✗ A1 threw, fall through'); }
+            }
         } else {
             console.log('[ujs][downloadBlob] GM_download not available, using Mode B');
         }
 
-        // ---- Mode B: Anchor download (universal fallback) ----
+        // ---- Mode B: Anchor download of the already-fetched Blob (universal fallback) ----
         console.log('[ujs][downloadBlob] B: <a download> fallback');
         const blobUrl = URL.createObjectURL(blob);
         const a = document.createElement("a");
