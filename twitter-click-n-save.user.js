@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name        Twitter Click'n'Save with text
-// @version     1.17
+// @version     1.18
 // @namespace   rfs.tampermonkey
 // @description Add buttons to download images and videos in Twitter, also does some other enhancements.
 // @match       https://twitter.com/*
@@ -2611,11 +2611,13 @@ function getUtils({verbose}) {
     //   https://www.xbext.com/docs/user-script-api-reference.html#GM-download
     // If the downloader reports an error (onerror) or stays silent for 60s, fall back to Mode B
     // (<a download> blobUrl) to guarantee the already-fetched Blob is saved.
-    // Truncate the FINAL filename to maxFilenameBytes (byte-safe), preserving the tail
+    // Truncate the FINAL filename to max (byte-safe), preserving the tail
     // " —<name>.<ext>" (and thus the file extension). The tweet-text part alone is truncated
     // to 255 bytes upstream, but the "[x]{author}—" prefix and " —{name}.{extension}" suffix
     // push the total over the limit. GM_download(http) truncates the name itself, but X Browser's
     // blob downloader (<a download>) does NOT → open() fails with ENAMETOOLONG/ENOENT → no file.
+    // downloadBlob passes max = maxFilenameBytes - 8 to reserve room for X Browser's own
+    // conflict-resolution suffix ("_1" / " (1)") when the target file already exists.
     function limitFilenameBytes(filename, max = maxFilenameBytes) {
         if (!filename || typeof filename !== 'string') return filename;
         const enc = new TextEncoder();
@@ -2635,46 +2637,10 @@ function getUtils({verbose}) {
         return truncated + tail;
     }
 
-    // Deduplicate filename: if the same name was already downloaded (re-download, or the target
-    // file already exists), append " (N)" before the extension and keep the result within
-    // maxFilenameBytes. X Browser's own conflict-resolution " (1)" would push a 255-byte name over
-    // the filesystem limit and the file never leaves the staging dir — so we pre-empt it here.
-    function dedupFilename(name) {
-        try {
-            const KEY = 'ujs_downloaded_filenames';
-            let used;
-            try {
-                used = JSON.parse(localStorage.getItem(KEY) || '[]');
-            } catch (_) { used = []; }
-            if (!Array.isArray(used)) used = [];
-            if (used.length > 2000) used = used.slice(-1000);
-
-            if (!used.includes(name)) {
-                used.push(name);
-                try { localStorage.setItem(KEY, JSON.stringify(used)); } catch (_) {}
-                return name;
-            }
-
-            const extMatch = name.match(/\.\w+$/);
-            const ext = extMatch ? extMatch[0] : '';
-            const base = ext ? name.slice(0, -ext.length) : name;
-            let final = name;
-            let n = 1;
-            while (used.includes(final) && n <= 100) {
-                final = limitFilenameBytes(base + ' (' + n + ')' + ext);
-                n++;
-            }
-            used.push(final);
-            try { localStorage.setItem(KEY, JSON.stringify(used)); } catch (_) {}
-            return final;
-        } catch (e) {
-            return name;
-        }
-    }
-
     function downloadBlob(blob, name, url, tag) {
-        name = limitFilenameBytes(name);
-        name = dedupFilename(name);
+        // Reserve ~8 bytes for X Browser's own conflict-resolution suffix ("_1" / " (1)") so the
+        // final name stays within the 255-byte filesystem limit even when the file already exists.
+        name = limitFilenameBytes(name, maxFilenameBytes - 8);
         const isMobile = /Android|iPhone|iPad|Mobile/i.test(navigator.userAgent);
 
         // ---- Mode B: <a download> of the already-fetched Blob (universal fallback) ----
