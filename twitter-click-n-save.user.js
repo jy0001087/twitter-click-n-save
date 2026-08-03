@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name        Twitter Click'n'Save with text
-// @version     1.13
+// @version     1.14
 // @namespace   rfs.tampermonkey
 // @description Add buttons to download images and videos in Twitter, also does some other enhancements.
 // @match       https://twitter.com/*
@@ -1209,7 +1209,7 @@ function hoistFeatures() {
             const filename = renderTemplateString(videoFilenameTemplate, {
                 author, lastModifiedDate, tweetId: videoTweetId, name, extension, tweetText // 添加 tweetText
             }).value;
-            downloadBlob(blob, filename, url);
+            downloadBlob(blob, filename, url, author);
 
             const downloaded = Btn.isDownloaded(btn);
             if (!downloaded) {
@@ -2589,12 +2589,11 @@ function getUtils({verbose}) {
     // Desktop (Tampermonkey): save the already-fetched Blob (A2/A3) — do NOT re-download the CDN URL.
     // Mobile (incl. X Browser): GM_download only accepts http/https URL strings — Blob/blobUrl are
     // NOT supported (they silently "succeed" without downloading anything). So mobile uses A1
-    // (original CDN URL + custom name) and passes the page Referer via headers, exactly like
-    // X Browser's own official example:
+    // (original CDN URL + custom name + tag + page Referer) to save the file into Download/<tag>/
+    // with the custom filename, exactly like X Browser's own official example:
     //   https://www.xbext.com/docs/user-script-api-reference.html#GM-download
-    // If the downloader reports an error (onerror) or stays silent for 20s, fall back to Mode B
-    // (<a download> blobUrl) to guarantee the already-fetched Blob is saved (WebView may ignore
-    // the custom filename there).
+    // If the downloader reports an error (onerror) or stays silent for 60s, fall back to Mode B
+    // (<a download> blobUrl) to guarantee the already-fetched Blob is saved.
     // Truncate the FINAL filename to maxFilenameBytes (byte-safe), preserving the tail
     // " —<name>.<ext>" (and thus the file extension). The tweet-text part alone is truncated
     // to 255 bytes upstream, but the "[x]{author}—" prefix and " —{name}.{extension}" suffix
@@ -2619,7 +2618,7 @@ function getUtils({verbose}) {
         return truncated + tail;
     }
 
-    function downloadBlob(blob, name, url) {
+    function downloadBlob(blob, name, url, tag) {
         name = limitFilenameBytes(name);
         const isMobile = /Android|iPhone|iPad|Mobile/i.test(navigator.userAgent);
 
@@ -2650,12 +2649,12 @@ function getUtils({verbose}) {
             return;
         }
 
-        // ---- Mobile (incl. X Browser): use Mode B (<a download> blob) directly. ----
-        // X Browser's GM_download only accepts http/https URL strings — Blob/blobUrl silently
-        // "succeed" without downloading anything, and its onload/onerror callbacks are unreliable
-        // (onload fires even when the native downloader actually fails). Mode B downloads the
-        // already-fetched Blob directly and saves it to the Downloads folder with the (truncated)
-        // custom filename — verified working on X Browser.
+        // ---- Mobile (incl. X Browser): A1 (GM_download) with tag + Referer ----
+        // GM_download accepts http/https URL strings (Blob/blobUrl silently "succeed" without
+        // downloading anything). We pass the original CDN URL, the custom name, a tag (author
+        // screen_name) to create Download/<tag>/<name>, and the page Referer header — exactly
+        // like X Browser's official example. If A1 fails (onerror), fall back to Mode B.
+        // If neither callback fires within 60s, Mode B acts as a safety net.
         if (isMobile) {
             try {
                 if (typeof GM_info === 'object') {
@@ -2663,6 +2662,45 @@ function getUtils({verbose}) {
                         + ' downloadMode=' + GM_info.downloadMode);
                 }
             } catch (_) {}
+
+            if (url && /^https?:\/\//i.test(url) && tag) {
+                let a1Finished = false;
+                console.log('[ujs][downloadBlob] A1: GM_download(originalUrl, tag=' + tag + ')', name);
+                try {
+                    const r = GM_download({
+                        url, name: name || '',
+                        tag: tag,
+                        headers: { Referer: location.origin + '/' },
+                        onload() {
+                            a1Finished = true;
+                            console.log('[ujs][downloadBlob] ✓ A1(onload) succeeded');
+                        },
+                        onerror() {
+                            a1Finished = true;
+                            console.warn('[ujs][downloadBlob] ✗ A1(onerror) failed, fallback to Mode B');
+                            modeB();
+                        }
+                    });
+                    if (r === false) {
+                        console.warn('[ujs][downloadBlob] ✗ A1 rejected, fallback to Mode B');
+                        modeB();
+                        return;
+                    }
+                } catch (e) {
+                    console.warn('[ujs][downloadBlob] ✗ A1 threw, fallback to Mode B');
+                    modeB();
+                    return;
+                }
+                // Safety net: if no callback within 60s, fall back to Mode B
+                setTimeout(() => {
+                    if (!a1Finished) {
+                        console.warn('[ujs][downloadBlob] A1 timeout (60s), fallback to Mode B');
+                        modeB();
+                    }
+                }, 60000);
+                return;
+            }
+
             console.log('[ujs][downloadBlob] mobile: Mode B (<a download> blob)');
             modeB();
             return;
