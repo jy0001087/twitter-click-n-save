@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name        Twitter Click'n'Save with text
-// @version     1.14
+// @version     1.15
 // @namespace   rfs.tampermonkey
 // @description Add buttons to download images and videos in Twitter, also does some other enhancements.
 // @match       https://twitter.com/*
@@ -1209,7 +1209,7 @@ function hoistFeatures() {
             const filename = renderTemplateString(videoFilenameTemplate, {
                 author, lastModifiedDate, tweetId: videoTweetId, name, extension, tweetText // 添加 tweetText
             }).value;
-            downloadBlob(blob, filename, url, author);
+            downloadBlob(blob, filename, url, 'xDownMedia/' + author);
 
             const downloaded = Btn.isDownloaded(btn);
             if (!downloaded) {
