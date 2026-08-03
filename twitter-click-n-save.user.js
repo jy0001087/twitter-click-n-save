@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name        Twitter Click'n'Save with text
-// @version     1.10
+// @version     1.11
 // @namespace   rfs.tampermonkey
 // @description Add buttons to download images and videos in Twitter, also does some other enhancements.
 // @match       https://twitter.com/*
@@ -2603,7 +2603,11 @@ function getUtils({verbose}) {
             console.log('[ujs][downloadBlob] B: <a download> fallback');
             const u = URL.createObjectURL(blob);
             const a = document.createElement("a");
-            a.href = u + (url ? ("#" + url) : "");
+            // NOTE: do NOT append "#<originalUrl>" to the blob URL. X Browser's downloader looks up
+            // the blob by its exact registered URL; any fragment makes it miss the cache
+            // ("Blob not found in cache for URL") and it falls back to fetch()ing the raw CDN URL,
+            // which is Referer-gated → 403 → no file saved.
+            a.href = u;
             a.download = name || '';
             a.style.display = 'none';
             a.target = '_blank';
