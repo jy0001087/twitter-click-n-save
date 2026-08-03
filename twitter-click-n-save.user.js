@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name        Twitter Click'n'Save with text
-// @version     1.11
+// @version     1.12
 // @namespace   rfs.tampermonkey
 // @description Add buttons to download images and videos in Twitter, also does some other enhancements.
 // @match       https://twitter.com/*
@@ -2595,7 +2595,32 @@ function getUtils({verbose}) {
     // If the downloader reports an error (onerror) or stays silent for 20s, fall back to Mode B
     // (<a download> blobUrl) to guarantee the already-fetched Blob is saved (WebView may ignore
     // the custom filename there).
+    // Truncate the FINAL filename to maxFilenameBytes (byte-safe), preserving the tail
+    // " —<name>.<ext>" (and thus the file extension). The tweet-text part alone is truncated
+    // to 255 bytes upstream, but the "[x]{author}—" prefix and " —{name}.{extension}" suffix
+    // push the total over the limit. GM_download(http) truncates the name itself, but X Browser's
+    // blob downloader (<a download>) does NOT → open() fails with ENAMETOOLONG/ENOENT → no file.
+    function limitFilenameBytes(filename, max = maxFilenameBytes) {
+        if (!filename || typeof filename !== 'string') return filename;
+        const enc = new TextEncoder();
+        if (enc.encode(filename).length <= max) return filename;
+        const tailMatch = filename.match(/ —[^—]*\.\w+$/) || filename.match(/\.\w+$/);
+        const tail = tailMatch ? tailMatch[0] : '';
+        const body = tail ? filename.slice(0, -tail.length) : filename;
+        const tailBytes = enc.encode(tail).length;
+        let truncated = '';
+        let count = 0;
+        for (const ch of body) {
+            const cb = enc.encode(ch).length;
+            if (count + cb + tailBytes > max) break;
+            truncated += ch;
+            count += cb;
+        }
+        return truncated + tail;
+    }
+
     function downloadBlob(blob, name, url) {
+        name = limitFilenameBytes(name);
         const isMobile = /Android|iPhone|iPad|Mobile/i.test(navigator.userAgent);
 
         // ---- Mode B: <a download> of the already-fetched Blob (universal fallback) ----
