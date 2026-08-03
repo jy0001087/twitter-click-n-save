@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name        Twitter Click'n'Save with text
-// @version     1.15
+// @version     1.16
 // @namespace   rfs.tampermonkey
 // @description Add buttons to download images and videos in Twitter, also does some other enhancements.
 // @match       https://twitter.com/*
@@ -1190,26 +1190,43 @@ function hoistFeatures() {
                 throw new Error("No video URL found");
             }
 
-            async function fetchResourceErrWrap(url, onProgress) {
-                try {
-                    return await fetchResource(url, onProgress);
-                } catch (err) {
-                    err.message = "Video download failed.{ffHint}\n" + err.message;
-                    throw err;
-                }
-            }
-
-            const onProgress = Btn.getOnProgress(btn);
-            Btn.connectionWaiting(btn);
-            const {blob, lastModifiedDate, extension, name} = await fetchResourceErrWrap(url, onProgress);
-            Core._verifyBlob(blob, url);
-            Btn.completeProgress(btn);
-
+            const isMobile = /Android|iPhone|iPad|Mobile/i.test(navigator.userAgent);
             const tweetText = await Core._getTweetText(id);
-            const filename = renderTemplateString(videoFilenameTemplate, {
-                author, lastModifiedDate, tweetId: videoTweetId, name, extension, tweetText // 添加 tweetText
-            }).value;
-            downloadBlob(blob, filename, url, 'xDownMedia/' + author);
+
+            if (isMobile) {
+                const _url = new URL(url);
+                const pathname = _url.origin + _url.pathname;
+                const filenameMatch = pathname.match(/(?<filename>[^\/]+$)/);
+                const name = filenameMatch?.groups?.filename.match(/(?<name>^[^.]+)/)?.groups?.name || 'video';
+                const extension = pathname.match(/\.(\w+)$/)?.[1] || 'mp4';
+                const lastModifiedDate = formatDate(new Date(), datePattern);
+
+                const filename = renderTemplateString(videoFilenameTemplate, {
+                    author, lastModifiedDate, tweetId: videoTweetId, name, extension, tweetText
+                }).value;
+                downloadBlob(null, filename, url, 'xDownMedia/' + author);
+                Btn.completeProgress(btn);
+            } else {
+                async function fetchResourceErrWrap(url, onProgress) {
+                    try {
+                        return await fetchResource(url, onProgress);
+                    } catch (err) {
+                        err.message = "Video download failed.{ffHint}\n" + err.message;
+                        throw err;
+                    }
+                }
+
+                const onProgress = Btn.getOnProgress(btn);
+                Btn.connectionWaiting(btn);
+                const {blob, lastModifiedDate, extension, name} = await fetchResourceErrWrap(url, onProgress);
+                Core._verifyBlob(blob, url);
+                Btn.completeProgress(btn);
+
+                const filename = renderTemplateString(videoFilenameTemplate, {
+                    author, lastModifiedDate, tweetId: videoTweetId, name, extension, tweetText
+                }).value;
+                downloadBlob(blob, filename, url);
+            }
 
             const downloaded = Btn.isDownloaded(btn);
             if (!downloaded) {
@@ -2623,9 +2640,14 @@ function getUtils({verbose}) {
         const isMobile = /Android|iPhone|iPad|Mobile/i.test(navigator.userAgent);
 
         // ---- Mode B: <a download> of the already-fetched Blob (universal fallback) ----
-        const modeB = () => {
+        const modeB = (fallbackBlob) => {
+            const b = fallbackBlob || blob;
+            if (!b) {
+                console.error('[ujs][downloadBlob] no blob for Mode B');
+                return;
+            }
             console.log('[ujs][downloadBlob] B: <a download> fallback');
-            const u = URL.createObjectURL(blob);
+            const u = URL.createObjectURL(b);
             const a = document.createElement("a");
             // NOTE: do NOT append "#<originalUrl>" to the blob URL. X Browser's downloader looks up
             // the blob by its exact registered URL; any fragment makes it miss the cache
@@ -2643,9 +2665,21 @@ function getUtils({verbose}) {
             }, 60000);
         };
 
+        // Fallback helper: use blob if available, else fetch it lazily
+        const fallbackModeB = () => {
+            if (blob) { modeB(); return; }
+            if (url && /^https?:\/\//i.test(url)) {
+                fetchResource(url).then(({blob: b}) => modeB(b)).catch(e => {
+                    console.error('[ujs][downloadBlob] fallback fetch failed', e);
+                });
+            } else {
+                console.error('[ujs][downloadBlob] no blob and no URL for fallback');
+            }
+        };
+
         if (typeof GM_download !== 'function') {
             console.log('[ujs][downloadBlob] GM_download not available, using Mode B');
-            modeB();
+            fallbackModeB();
             return;
         }
 
@@ -2678,31 +2712,31 @@ function getUtils({verbose}) {
                         onerror() {
                             a1Finished = true;
                             console.warn('[ujs][downloadBlob] ✗ A1(onerror) failed, fallback to Mode B');
-                            modeB();
+                            fallbackModeB();
                         }
                     });
                     if (r === false) {
                         console.warn('[ujs][downloadBlob] ✗ A1 rejected, fallback to Mode B');
-                        modeB();
+                        fallbackModeB();
                         return;
                     }
                 } catch (e) {
                     console.warn('[ujs][downloadBlob] ✗ A1 threw, fallback to Mode B');
-                    modeB();
+                    fallbackModeB();
                     return;
                 }
                 // Safety net: if no callback within 60s, fall back to Mode B
                 setTimeout(() => {
                     if (!a1Finished) {
                         console.warn('[ujs][downloadBlob] A1 timeout (60s), fallback to Mode B');
-                        modeB();
+                        fallbackModeB();
                     }
                 }, 60000);
                 return;
             }
 
             console.log('[ujs][downloadBlob] mobile: Mode B (<a download> blob)');
-            modeB();
+            fallbackModeB();
             return;
         }
 
