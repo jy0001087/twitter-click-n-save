@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name        Twitter Click'n'Save with text
-// @version     1.12
+// @version     1.13
 // @namespace   rfs.tampermonkey
 // @description Add buttons to download images and videos in Twitter, also does some other enhancements.
 // @match       https://twitter.com/*
@@ -2650,11 +2650,12 @@ function getUtils({verbose}) {
             return;
         }
 
-        // ---- Mobile (incl. X Browser): DIAGNOSTIC BUILD — bypass GM_download entirely. ----
-        // X Browser's GM_download fires onload even when the native downloader actually fails
-        // ("下载失败"), so its callbacks are unreliable and cannot be trusted for success/fallback.
-        // This build skips GM_download on mobile and goes straight to Mode B (<a download> blob)
-        // to test whether X Browser can download the in-memory Blob at all.
+        // ---- Mobile (incl. X Browser): use Mode B (<a download> blob) directly. ----
+        // X Browser's GM_download only accepts http/https URL strings — Blob/blobUrl silently
+        // "succeed" without downloading anything, and its onload/onerror callbacks are unreliable
+        // (onload fires even when the native downloader actually fails). Mode B downloads the
+        // already-fetched Blob directly and saves it to the Downloads folder with the (truncated)
+        // custom filename — verified working on X Browser.
         if (isMobile) {
             try {
                 if (typeof GM_info === 'object') {
@@ -2662,7 +2663,7 @@ function getUtils({verbose}) {
                         + ' downloadMode=' + GM_info.downloadMode);
                 }
             } catch (_) {}
-            console.log('[ujs][downloadBlob] mobile DIAGNOSTIC: skipping GM_download, going straight to Mode B');
+            console.log('[ujs][downloadBlob] mobile: Mode B (<a download> blob)');
             modeB();
             return;
         }
