@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name        Twitter Click'n'Save with text
-// @version     1.16
+// @version     1.17
 // @namespace   rfs.tampermonkey
 // @description Add buttons to download images and videos in Twitter, also does some other enhancements.
 // @match       https://twitter.com/*
@@ -2635,8 +2635,46 @@ function getUtils({verbose}) {
         return truncated + tail;
     }
 
+    // Deduplicate filename: if the same name was already downloaded (re-download, or the target
+    // file already exists), append " (N)" before the extension and keep the result within
+    // maxFilenameBytes. X Browser's own conflict-resolution " (1)" would push a 255-byte name over
+    // the filesystem limit and the file never leaves the staging dir — so we pre-empt it here.
+    function dedupFilename(name) {
+        try {
+            const KEY = 'ujs_downloaded_filenames';
+            let used;
+            try {
+                used = JSON.parse(localStorage.getItem(KEY) || '[]');
+            } catch (_) { used = []; }
+            if (!Array.isArray(used)) used = [];
+            if (used.length > 2000) used = used.slice(-1000);
+
+            if (!used.includes(name)) {
+                used.push(name);
+                try { localStorage.setItem(KEY, JSON.stringify(used)); } catch (_) {}
+                return name;
+            }
+
+            const extMatch = name.match(/\.\w+$/);
+            const ext = extMatch ? extMatch[0] : '';
+            const base = ext ? name.slice(0, -ext.length) : name;
+            let final = name;
+            let n = 1;
+            while (used.includes(final) && n <= 100) {
+                final = limitFilenameBytes(base + ' (' + n + ')' + ext);
+                n++;
+            }
+            used.push(final);
+            try { localStorage.setItem(KEY, JSON.stringify(used)); } catch (_) {}
+            return final;
+        } catch (e) {
+            return name;
+        }
+    }
+
     function downloadBlob(blob, name, url, tag) {
         name = limitFilenameBytes(name);
+        name = dedupFilename(name);
         const isMobile = /Android|iPhone|iPad|Mobile/i.test(navigator.userAgent);
 
         // ---- Mode B: <a download> of the already-fetched Blob (universal fallback) ----
