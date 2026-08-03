@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name        Twitter Click'n'Save with text
-// @version     1.09
+// @version     1.10
 // @namespace   rfs.tampermonkey
 // @description Add buttons to download images and videos in Twitter, also does some other enhancements.
 // @match       https://twitter.com/*
@@ -2621,30 +2621,19 @@ function getUtils({verbose}) {
             return;
         }
 
-        // ---- Mobile (incl. X Browser): A1 original URL + page Referer, keep the custom name ----
+        // ---- Mobile (incl. X Browser): DIAGNOSTIC BUILD — bypass GM_download entirely. ----
+        // X Browser's GM_download fires onload even when the native downloader actually fails
+        // ("下载失败"), so its callbacks are unreliable and cannot be trusted for success/fallback.
+        // This build skips GM_download on mobile and goes straight to Mode B (<a download> blob)
+        // to test whether X Browser can download the in-memory Blob at all.
         if (isMobile) {
-            if (url && /^https?:\/\//i.test(url)) {
-                let settled = false;
-                const toModeB = (why) => {
-                    if (settled) return;
-                    settled = true;
-                    console.warn('[ujs][downloadBlob] A1(mobile) ' + why + ' → Mode B');
-                    modeB();
-                };
-                try {
-                    console.log('[ujs][downloadBlob] A1(mobile): GM_download(originalUrl, name)', name);
-                    const r = GM_download({
-                        url, name: name || '',
-                        headers: { Referer: location.origin + '/' },
-                        onload() { settled = true; console.log('[ujs][downloadBlob] ✓ A1(mobile) downloader finished'); },
-                        onerror() { console.warn('[ujs][downloadBlob] ✗ A1(mobile) downloader reported an error'); toModeB('downloader error'); }
-                    });
-                    if (r === false) { toModeB('rejected synchronously'); return; }
-                    setTimeout(() => toModeB('no event within 20s'), 20000);
-                    return;
-                } catch (_) {}
-            }
-            console.log('[ujs][downloadBlob] mobile: no http(s) URL, using Mode B');
+            try {
+                if (typeof GM_info === 'object') {
+                    console.log('[ujs][downloadBlob] mobile env: handler=' + GM_info.scriptHandler
+                        + ' downloadMode=' + GM_info.downloadMode);
+                }
+            } catch (_) {}
+            console.log('[ujs][downloadBlob] mobile DIAGNOSTIC: skipping GM_download, going straight to Mode B');
             modeB();
             return;
         }
