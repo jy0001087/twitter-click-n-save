@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name        Twitter Click'n'Save with text
-// @version     1.20
+// @version     1.22
 // @namespace   rfs.tampermonkey
 // @description Add buttons to download images and videos in Twitter, also does some other enhancements.
 // @match       https://twitter.com/*
@@ -2759,48 +2759,67 @@ function getUtils({verbose}) {
             return;
         }
 
-        // ---- Desktop: A2 blob → A3 blobUrl → A1 original URL ----
+        // ---- Desktop: A1 original URL → A3 blobUrl → Mode B ----
         // Keep media in the same author subfolder used by the mobile downloader.
         if (tag) {
             name = tag.replace(/\\/g, '/') + '/' + name;
+            name = limitFilenameBytes(name, maxFilenameBytes - 8);
         }
-        // A2: Blob object directly (Tampermonkey 5.4.6226+, avoids re-fetch)
-        try {
-            console.log('[ujs][downloadBlob] A2: GM_download(blob, name)', name);
-            const r = GM_download({ url: blob, name: name || '' });
-            if (r !== false) { console.log('[ujs][downloadBlob] ✓ A2 succeeded'); return; }
-        } catch (_) {}
 
-        // A3: Blob URL (older Tampermonkey)
-        let blobUrl = URL.createObjectURL(blob);
-        let ok = false;
-        try {
-            console.log('[ujs][downloadBlob] A3: GM_download(blobUrl, name)', name);
-            const r = GM_download({
-                url: blobUrl,
-                name: name || '',
-                onload() { try { URL.revokeObjectURL(blobUrl); } catch(_) {} },
-                onerror() { try { URL.revokeObjectURL(blobUrl); } catch(_) {} }
-            });
-            ok = r !== false;
-        } catch (_) {}
-        if (ok) { console.log('[ujs][downloadBlob] ✓ A3 succeeded'); return; }
-        try { URL.revokeObjectURL(blobUrl); } catch(_) {}
+        // Prefer the URL-based download, like the mobile video flow, so the handler receives
+        // an explicit filename and author folder instead of inferring a random Blob filename.
+        const blobUrl = URL.createObjectURL(blob);
+        let finished = false;
+        const fallbackToBlobUrl = () => {
+            if (finished) return;
+            finished = true;
+            let blobFallbackFinished = false;
+            const blobUrlFinished = (success) => {
+                if (blobFallbackFinished) return;
+                blobFallbackFinished = true;
+                try { URL.revokeObjectURL(blobUrl); } catch (_) {}
+                if (!success) fallbackModeB();
+            };
+            try {
+                console.warn('[ujs][downloadBlob] falling back to Blob URL', name);
+                const r = GM_download({
+                    url: blobUrl,
+                    name: name || '',
+                    onload() { blobUrlFinished(true); },
+                    onerror() { blobUrlFinished(false); }
+                });
+                if (r === false) blobUrlFinished(false);
+                else setTimeout(() => blobUrlFinished(false), 60000);
+            } catch (e) {
+                console.warn('[ujs][downloadBlob] Blob URL fallback threw', e);
+                blobUrlFinished(false);
+            }
+        };
 
-        // A1: Original URL + custom name + page Referer (re-download via the browser's downloader)
         if (url && /^https?:\/\//i.test(url)) {
             try {
                 console.log('[ujs][downloadBlob] A1: GM_download(originalUrl, name)', name);
                 const r = GM_download({
                     url, name: name || '',
                     headers: { Referer: location.origin + '/' },
-                    onerror() { console.warn('[ujs][downloadBlob] ✗ A1 downloader reported an error'); }
+                    onload() {
+                        finished = true;
+                        try { URL.revokeObjectURL(blobUrl); } catch (_) {}
+                        console.log('[ujs][downloadBlob] ✓ A1(onload) succeeded');
+                    },
+                    onerror() {
+                        console.warn('[ujs][downloadBlob] ✗ A1 failed, falling back to Blob URL');
+                        fallbackToBlobUrl();
+                    }
                 });
-                if (r !== false) { console.log('[ujs][downloadBlob] ✓ A1 succeeded'); return; }
-            } catch (_) { console.log('[ujs][downloadBlob] ✗ A1 threw, fall through'); }
+                if (r === false) fallbackToBlobUrl();
+                else setTimeout(fallbackToBlobUrl, 60000);
+                return;
+            } catch (e) {
+                console.warn('[ujs][downloadBlob] ✗ A1 threw, falling back to Blob URL', e);
+            }
         }
-
-        modeB();
+        fallbackToBlobUrl();
     }
 
     /**
