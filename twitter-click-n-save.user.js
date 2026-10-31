@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name        Twitter Click'n'Save with text
-// @version     1.19
+// @version     1.20
 // @namespace   rfs.tampermonkey
 // @description Add buttons to download images and videos in Twitter, also does some other enhancements.
 // @match       https://twitter.com/*
@@ -987,11 +987,26 @@ function hoistFeatures() {
                 return Core._downloadBanner(url, btn);
             }
 
-            const {id, author} = Tweet.of(btn);
+            const {id, author: pageAuthor} = Tweet.of(btn);
+            let author = pageAuthor;
+            try {
+                const medias = await API.getTweetMedias(id);
+                const imagePath = new URL(url).pathname.replace(/\.(?:jpe?g|png|webp)$/i, "");
+                const mediaEntry = medias.find(media => {
+                    if (media.type !== "photo" || media.tweet_id !== id || !media.download_url) {
+                        return false;
+                    }
+                    const mediaPath = new URL(media.download_url).pathname.replace(/\.(?:jpe?g|png|webp)$/i, "");
+                    return mediaPath === imagePath;
+                });
+                author = mediaEntry?.screen_name || author;
+            } catch (err) {
+                verbose && console.warn("[ujs][_imageClickHandler] Could not resolve author from media API", err);
+            }
             verbose && console.log("[ujs][_imageClickHandler]", {id, author});
 
             try {
-                await Core._downloadPhotoMediaEntry(id, author, url, btn);
+                await Core._downloadPhotoMediaEntry(id, author || "unknown", url, btn);
             } catch (err) {
                 throw Btn.error({btn, err, text: "Failed to download the image."});
             }
