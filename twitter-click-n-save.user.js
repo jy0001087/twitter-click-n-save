@@ -1087,7 +1087,7 @@ function hoistFeatures() {
             const filename = renderTemplateString(imageFilenameTemplate, {
                 author, lastModifiedDate, tweetId: id, name, extension, sampleText, tweetText // 添加 tweetText
             }).value;
-            downloadBlob(blob, filename, currentUrl);
+            downloadBlob(blob, filename, currentUrl, 'xDownMedia/' + author);
 
             const downloaded = Btn.isDownloaded(btn);
             if (!downloaded && !isSample) {
@@ -1225,7 +1225,7 @@ function hoistFeatures() {
                 const filename = renderTemplateString(videoFilenameTemplate, {
                     author, lastModifiedDate, tweetId: videoTweetId, name, extension, tweetText
                 }).value;
-                downloadBlob(blob, filename, url);
+                downloadBlob(blob, filename, url, 'xDownMedia/' + author);
             }
 
             const downloaded = Btn.isDownloaded(btn);
@@ -2744,7 +2744,11 @@ function getUtils({verbose}) {
             return;
         }
 
-        // ---- Desktop (unchanged): A2 blob → A3 blobUrl → A1 original URL ----
+        // ---- Desktop: A2 blob → A3 blobUrl → A1 original URL ----
+        // Keep media in the same author subfolder used by the mobile downloader.
+        if (tag) {
+            name = tag.replace(/\\/g, '/') + '/' + name;
+        }
         // A2: Blob object directly (Tampermonkey 5.4.6226+, avoids re-fetch)
         try {
             console.log('[ujs][downloadBlob] A2: GM_download(blob, name)', name);
